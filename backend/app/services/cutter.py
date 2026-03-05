@@ -21,11 +21,12 @@ def cut_video(
             seg_path = os.path.join(job_dir, f"seg_{i:04d}.mp4")
             segment_files.append(seg_path)
 
+            duration = end - start
             cmd = [
                 settings.ffmpeg_path, "-y",
                 "-ss", f"{start:.3f}",
-                "-to", f"{end:.3f}",
                 "-i", input_path,
+                "-t", f"{duration:.3f}",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "18",
                 "-c:a", "aac", "-b:a", "192k",
                 "-avoid_negative_ts", "make_zero",
@@ -45,6 +46,7 @@ def cut_video(
             "-f", "concat", "-safe", "0",
             "-i", concat_path,
             "-c", "copy",
+            "-movflags", "+faststart",
             output_path,
         ]
         subprocess.run(cmd, capture_output=True, text=True, check=True)
