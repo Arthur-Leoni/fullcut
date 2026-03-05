@@ -1,8 +1,13 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export interface ProcessingSettings {
-  processing_mode: "cut_only" | "denoise_only" | "both" | "voice_isolation";
+  // Feature toggles (independent)
+  cut_silences: boolean;
+  remove_noise: boolean;
+  isolate_voice: boolean;
+  // Noise settings
   noise_reduction_strength: number;
+  // Cut settings
   silence_threshold_db: number;
   min_silence_duration: number;
   detect_fillers: boolean;

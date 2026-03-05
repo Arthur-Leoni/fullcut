@@ -110,7 +110,12 @@ export default function EditorPage() {
                 <div className="text-center">
                   <button
                     onClick={handleProcess}
-                    className="rounded-full bg-primary px-10 py-3.5 text-sm font-semibold text-white shadow-sm hover:bg-primary-dark transition-colors"
+                    disabled={
+                      !settings.cut_silences &&
+                      !settings.remove_noise &&
+                      !settings.isolate_voice
+                    }
+                    className="rounded-full bg-primary px-10 py-3.5 text-sm font-semibold text-white shadow-sm hover:bg-primary-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Processar vídeo
                   </button>

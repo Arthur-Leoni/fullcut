@@ -48,11 +48,10 @@ def isolate_vocals(audio_path: str, output_path: str) -> None:
         wav = wav.repeat(2, 1)
 
     # Add batch dimension: (channels, samples) -> (1, channels, samples)
-    ref = wav.mean(0)
-    wav = (wav - ref.mean()) / ref.std()
+    # Do NOT normalize manually — apply_model handles normalization internally
     wav_input = wav.unsqueeze(0)
 
-    # Apply model
+    # Apply model (normalize=True by default, handles it internally)
     print("[VOICE_ISOLATION] Running Demucs separation (this may take a while)...")
     with torch.no_grad():
         sources = apply_model(model, wav_input, device="cpu")
@@ -61,9 +60,6 @@ def isolate_vocals(audio_path: str, output_path: str) -> None:
     # Find vocals index
     vocals_idx = model.sources.index("vocals")
     vocals = sources[0, vocals_idx]  # (channels, samples)
-
-    # Denormalize
-    vocals = vocals * ref.std() + ref.mean()
 
     # Convert back to mono for consistency with our pipeline (16kHz mono WAV)
     vocals_mono = vocals.mean(0, keepdim=True)  # (1, samples)

@@ -1,5 +1,6 @@
 import asyncio
 import os
+import shutil
 import traceback
 
 from app.config import settings
@@ -34,10 +35,11 @@ async def run_pipeline(
     clean_audio_path = os.path.join(job_dir, "audio_clean.wav")
     output_path = os.path.join(job_dir, "output.mp4")
 
-    mode = proc_settings.processing_mode  # "cut_only" | "denoise_only" | "both" | "voice_isolation"
-    should_denoise = mode in ("denoise_only", "both")
-    should_cut = mode in ("cut_only", "both")
-    should_isolate = mode == "voice_isolation"
+    # Independent feature toggles
+    want_isolate = proc_settings.isolate_voice
+    want_denoise = proc_settings.remove_noise
+    want_cut = proc_settings.cut_silences
+    audio_modified = False  # Track if we changed the audio
 
     async def progress(stage: str, percent: int, message: str = ""):
         await store.send_progress(job_id, stage, percent, message)
@@ -52,110 +54,118 @@ async def run_pipeline(
         extract_audio(input_path, audio_path)
         await progress("Áudio extraído", 10)
 
-        # Step 2: Noise reduction (if enabled)
-        analysis_audio = audio_path  # audio used for analysis (silence/whisper)
-        if should_denoise:
-            await progress("Removendo ruído de fundo...", 12)
+        # The "current best" audio — starts as raw, gets improved by each step
+        current_audio = audio_path
+
+        # Step 2: Voice isolation (Demucs) — if enabled
+        if want_isolate:
+            await progress("Isolando voz (IA)...", 12)
+            isolate_vocals(current_audio, clean_audio_path)
+            current_audio = clean_audio_path
+            audio_modified = True
+            job.voice_isolated = True
+            await progress("Voz isolada", 40)
+
+        # Step 3: Noise reduction (afftdn) — if enabled
+        if want_denoise:
+            denoise_input = current_audio
+            denoise_output = clean_audio_path if not audio_modified else os.path.join(job_dir, "audio_denoised.wav")
+            await progress("Removendo ruído de fundo...", 42 if want_isolate else 12)
             reduce_noise(
-                audio_path,
-                clean_audio_path,
+                denoise_input,
+                denoise_output,
                 strength=proc_settings.noise_reduction_strength,
             )
-            analysis_audio = clean_audio_path
-            await progress("Ruído removido", 18)
-
-        # If denoise-only mode, just replace audio and finish
-        if mode == "denoise_only":
-            await progress("Gerando vídeo com áudio limpo...", 85)
-            replace_audio_in_video(input_path, clean_audio_path, output_path)
-            result_duration = get_duration(output_path)
-            job.result_duration = result_duration
-            job.segments_removed = []
+            current_audio = denoise_output
+            audio_modified = True
             job.noise_reduced = True
-            job.status = JobStatus.COMPLETED
-            await progress("Concluído!", 100, "Vídeo pronto para download")
-            return
+            await progress("Ruído removido", 50 if want_isolate else 18)
 
-        # If voice isolation mode, use Demucs to extract vocals
-        if should_isolate:
-            await progress("Isolando voz (IA)...", 15)
-            isolate_vocals(audio_path, clean_audio_path)
-            await progress("Voz isolada, gerando vídeo...", 80)
-            replace_audio_in_video(input_path, clean_audio_path, output_path)
-            result_duration = get_duration(output_path)
-            job.result_duration = result_duration
-            job.segments_removed = []
-            job.voice_isolated = True
-            job.status = JobStatus.COMPLETED
-            await progress("Concluído!", 100, "Vídeo pronto para download")
-            return
+        # Step 4: Cut silences — if enabled
+        if want_cut:
+            # Use the best available audio for analysis
+            analysis_audio = current_audio
 
-        # --- From here: cut_only or both ---
+            await progress("Detectando silêncios...", 52 if audio_modified else 20)
+            silences = detect_silences(
+                analysis_audio,
+                threshold_db=proc_settings.silence_threshold_db,
+                min_duration=proc_settings.min_silence_duration,
+            )
+            await progress(f"{len(silences)} silêncios encontrados", 55 if audio_modified else 25)
 
-        # Step 3: Silence detection (use clean audio if denoised for better detection)
-        await progress("Detectando silêncios...", 20)
-        silences = detect_silences(
-            analysis_audio,
-            threshold_db=proc_settings.silence_threshold_db,
-            min_duration=proc_settings.min_silence_duration,
-        )
-        await progress(f"{len(silences)} silêncios encontrados", 25)
+            # Whisper transcription
+            fillers: list[Segment] = []
+            repetitions: list[Segment] = []
+            word_segments: list[dict] = []
 
-        # Step 4: Whisper transcription
-        fillers: list[Segment] = []
-        repetitions: list[Segment] = []
-        word_segments: list[dict] = []
+            if proc_settings.detect_fillers or proc_settings.detect_repetitions:
+                await progress("Transcrevendo áudio (Whisper)...", 58 if audio_modified else 30)
+                word_segments = transcribe_audio(analysis_audio, model_name=settings.whisper_model)
+                await progress("Transcrição concluída", 75 if audio_modified else 70)
 
-        if proc_settings.detect_fillers or proc_settings.detect_repetitions:
-            await progress("Transcrevendo áudio (Whisper)...", 30)
-            word_segments = transcribe_audio(analysis_audio, model_name=settings.whisper_model)
-            await progress("Transcrição concluída", 70)
+            # Filler detection
+            if proc_settings.detect_fillers and word_segments:
+                await progress("Detectando filler words...", 77 if audio_modified else 72)
+                fillers = detect_fillers(word_segments, proc_settings.filler_words)
+                await progress(f"{len(fillers)} fillers encontrados", 80)
 
-        # Step 5: Filler detection
-        if proc_settings.detect_fillers and word_segments:
-            await progress("Detectando filler words...", 72)
-            fillers = detect_fillers(word_segments, proc_settings.filler_words)
-            await progress(f"{len(fillers)} fillers encontrados", 80)
+            # Repetition detection
+            if proc_settings.detect_repetitions and word_segments:
+                await progress("Detectando repetições...", 82)
+                repetitions = detect_repetitions(word_segments)
+                await progress(f"{len(repetitions)} repetições encontradas", 85)
 
-        # Step 6: Repetition detection
-        if proc_settings.detect_repetitions and word_segments:
-            await progress("Detectando repetições...", 82)
-            repetitions = detect_repetitions(word_segments)
-            await progress(f"{len(repetitions)} repetições encontradas", 85)
+            # Merge
+            await progress("Calculando cortes...", 87)
+            removed, keep_intervals = merge_segments(
+                silences, fillers, repetitions,
+                padding_s=proc_settings.padding_ms / 1000.0,
+                total_duration=duration,
+            )
 
-        # Step 7: Merge
-        await progress("Calculando cortes...", 87)
-        removed, keep_intervals = merge_segments(
-            silences, fillers, repetitions,
-            padding_s=proc_settings.padding_ms / 1000.0,
-            total_duration=duration,
-        )
+            # Debug logging
+            total_remove = sum(s.end - s.start for s in removed)
+            total_keep = sum(e - s for s, e in keep_intervals)
+            print(f"[PIPELINE] Original duration: {duration:.2f}s")
+            print(f"[PIPELINE] Segments to remove: {len(removed)}, total: {total_remove:.2f}s")
+            print(f"[PIPELINE] Keep intervals: {len(keep_intervals)}, total: {total_keep:.2f}s")
+            print(f"[PIPELINE] Expected result: {total_keep:.2f}s ({total_keep/duration*100:.1f}% of original)")
 
-        # Debug logging
-        total_remove = sum(s.end - s.start for s in removed)
-        total_keep = sum(e - s for s, e in keep_intervals)
-        print(f"[PIPELINE] Original duration: {duration:.2f}s")
-        print(f"[PIPELINE] Segments to remove: {len(removed)}, total: {total_remove:.2f}s")
-        print(f"[PIPELINE] Keep intervals: {len(keep_intervals)}, total: {total_keep:.2f}s")
-        print(f"[PIPELINE] Expected result: {total_keep:.2f}s ({total_keep/duration*100:.1f}% of original)")
+            await progress(f"{len(removed)} trechos para remover", 90)
 
-        await progress(f"{len(removed)} trechos para remover", 90)
+            # Cut video
+            if keep_intervals and len(keep_intervals) < len(removed) + 1 + 10000:
+                await progress("Cortando vídeo...", 92)
+                # Apply denoise filter in FFmpeg only if denoise is on AND we didn't already denoise the audio
+                # (if voice isolation was used, audio is already clean — no need for afftdn in cutter)
+                denoise_in_cutter = proc_settings.noise_reduction_strength if (want_denoise and not want_isolate) else None
+                cut_video(input_path, keep_intervals, output_path, denoise_strength=denoise_in_cutter)
+                result_duration = get_duration(output_path)
+                job.result_duration = result_duration
+            else:
+                # Nothing to cut
+                if audio_modified:
+                    replace_audio_in_video(input_path, current_audio, output_path)
+                else:
+                    shutil.copy2(input_path, output_path)
+                job.result_duration = duration
 
-        # Step 8: Cut video (with denoise filter if mode == "both")
-        if keep_intervals and len(keep_intervals) < len(removed) + 1 + 10000:
-            await progress("Cortando vídeo...", 92)
-            denoise_strength = proc_settings.noise_reduction_strength if should_denoise else None
-            cut_video(input_path, keep_intervals, output_path, denoise_strength=denoise_strength)
-            result_duration = get_duration(output_path)
-            job.result_duration = result_duration
+            job.segments_removed = removed
+
         else:
-            # Nothing to cut or video is all silence
-            import shutil
-            shutil.copy2(input_path, output_path)
-            job.result_duration = duration
+            # No cutting — just audio processing
+            if audio_modified:
+                await progress("Gerando vídeo com áudio processado...", 85)
+                replace_audio_in_video(input_path, current_audio, output_path)
+                result_duration = get_duration(output_path)
+                job.result_duration = result_duration
+            else:
+                # Nothing to do at all — just copy
+                shutil.copy2(input_path, output_path)
+                job.result_duration = duration
+            job.segments_removed = []
 
-        job.segments_removed = removed
-        job.noise_reduced = should_denoise
         job.status = JobStatus.COMPLETED
         await progress("Concluído!", 100, "Vídeo pronto para download")
 
