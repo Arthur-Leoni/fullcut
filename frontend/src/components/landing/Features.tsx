@@ -17,6 +17,18 @@ const features = [
       "Identifica quando você repete a mesma frase e mantém apenas a melhor versão.",
     icon: "🔄",
   },
+  {
+    title: "Supressão de ruído",
+    description:
+      "Remove ruído de fundo como ar condicionado, ventilador e sons ambiente do seu vídeo.",
+    icon: "🔊",
+  },
+  {
+    title: "Isolamento de voz",
+    description:
+      "IA avançada que extrai apenas a fala, removendo música, TV, trânsito e qualquer outro som.",
+    icon: "🎤",
+  },
 ];
 
 export function Features() {
@@ -26,7 +38,7 @@ export function Features() {
         <h2 className="text-center text-3xl font-bold tracking-tight sm:text-4xl">
           Tudo que você precisa
         </h2>
-        <div className="mt-16 grid grid-cols-1 gap-8 sm:grid-cols-3">
+        <div className="mt-16 grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
           {features.map((feature) => (
             <div
               key={feature.title}

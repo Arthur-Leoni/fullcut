@@ -8,16 +8,33 @@ def cut_video(
     input_path: str,
     keep_intervals: list[tuple[float, float]],
     output_path: str,
+    denoise_strength: float | None = None,
 ) -> None:
-    """Cut video keeping only the specified intervals using filter_complex."""
+    """Cut video keeping only the specified intervals using filter_complex.
+
+    Args:
+        input_path: Path to the input video.
+        keep_intervals: List of (start, end) tuples to keep.
+        output_path: Path for the output video.
+        denoise_strength: If set, apply afftdn noise reduction to audio.
+                          Value 0.0-1.0 maps to noise floor -20 to -80 dB.
+    """
     if not keep_intervals:
         raise ValueError("No intervals to keep")
 
     n = len(keep_intervals)
     total_keep = sum(end - start for start, end in keep_intervals)
     print(f"[CUTTER] {n} keep intervals, total keep time: {total_keep:.2f}s")
+    if denoise_strength is not None:
+        print(f"[CUTTER] Denoise enabled (strength={denoise_strength:.1f})")
     for i, (s, e) in enumerate(keep_intervals):
         print(f"[CUTTER]   #{i}: {s:.3f} -> {e:.3f} ({e-s:.3f}s)")
+
+    # Build denoise filter prefix for audio chain
+    denoise_filter = ""
+    if denoise_strength is not None:
+        noise_floor = -20 - (denoise_strength * 60)
+        denoise_filter = f"afftdn=nf={noise_floor:.0f}:tn=1,"
 
     # Use filter_complex with trim/atrim + concat for reliable timestamp handling
     filter_parts = []
@@ -28,7 +45,7 @@ def cut_video(
             f"[0:v]trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS[v{i}]"
         )
         filter_parts.append(
-            f"[0:a]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS[a{i}]"
+            f"[0:a]{denoise_filter}atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS[a{i}]"
         )
         concat_inputs += f"[v{i}][a{i}]"
 

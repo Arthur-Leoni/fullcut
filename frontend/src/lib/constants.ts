@@ -11,6 +11,10 @@ export const ACCEPTED_VIDEO_TYPES = [
 export const ACCEPTED_EXTENSIONS = [".mp4", ".mov", ".webm", ".mkv"];
 
 export const DEFAULT_SETTINGS = {
+  cut_silences: true,
+  remove_noise: false,
+  isolate_voice: false,
+  noise_reduction_strength: 0.5,
   silence_threshold_db: -35,
   min_silence_duration: 0.5,
   detect_fillers: true,

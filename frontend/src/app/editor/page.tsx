@@ -83,7 +83,7 @@ export default function EditorPage() {
             <div className="text-center">
               <h1 className="text-3xl font-bold">Envie seu vídeo</h1>
               <p className="mt-2 text-muted">
-                Selecione um vídeo e ajuste as configurações de corte
+                Selecione um vídeo e escolha o que deseja fazer
               </p>
             </div>
 
@@ -110,7 +110,12 @@ export default function EditorPage() {
                 <div className="text-center">
                   <button
                     onClick={handleProcess}
-                    className="rounded-full bg-primary px-10 py-3.5 text-sm font-semibold text-white shadow-sm hover:bg-primary-dark transition-colors"
+                    disabled={
+                      !settings.cut_silences &&
+                      !settings.remove_noise &&
+                      !settings.isolate_voice
+                    }
+                    className="rounded-full bg-primary px-10 py-3.5 text-sm font-semibold text-white shadow-sm hover:bg-primary-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Processar vídeo
                   </button>

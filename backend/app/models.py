@@ -11,6 +11,13 @@ class JobStatus(str, Enum):
 
 
 class ProcessingSettings(BaseModel):
+    # Feature toggles (independent)
+    cut_silences: bool = True
+    remove_noise: bool = True
+    isolate_voice: bool = False
+    # Noise reduction settings
+    noise_reduction_strength: float = 0.5  # 0.0 to 1.0
+    # Cut settings
     silence_threshold_db: float = -35.0
     min_silence_duration: float = 0.5
     detect_fillers: bool = True
@@ -37,4 +44,6 @@ class JobResponse(BaseModel):
     original_duration: float | None = None
     result_duration: float | None = None
     segments_removed: list[Segment] | None = None
+    noise_reduced: bool = False
+    voice_isolated: bool = False
     error: str | None = None
