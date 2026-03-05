@@ -9,53 +9,46 @@ def cut_video(
     keep_intervals: list[tuple[float, float]],
     output_path: str,
 ) -> None:
+    """Cut video keeping only the specified intervals using filter_complex."""
     if not keep_intervals:
         raise ValueError("No intervals to keep")
 
-    job_dir = os.path.dirname(output_path)
-    segment_files: list[str] = []
+    n = len(keep_intervals)
+    total_keep = sum(end - start for start, end in keep_intervals)
+    print(f"[CUTTER] {n} keep intervals, total keep time: {total_keep:.2f}s")
+    for i, (s, e) in enumerate(keep_intervals):
+        print(f"[CUTTER]   #{i}: {s:.3f} -> {e:.3f} ({e-s:.3f}s)")
 
-    try:
-        # Create segment clips
-        for i, (start, end) in enumerate(keep_intervals):
-            seg_path = os.path.join(job_dir, f"seg_{i:04d}.mp4")
-            segment_files.append(seg_path)
+    # Use filter_complex with trim/atrim + concat for reliable timestamp handling
+    filter_parts = []
+    concat_inputs = ""
 
-            duration = end - start
-            cmd = [
-                settings.ffmpeg_path, "-y",
-                "-ss", f"{start:.3f}",
-                "-i", input_path,
-                "-t", f"{duration:.3f}",
-                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-                "-c:a", "aac", "-b:a", "192k",
-                "-avoid_negative_ts", "make_zero",
-                seg_path,
-            ]
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
+    for i, (start, end) in enumerate(keep_intervals):
+        filter_parts.append(
+            f"[0:v]trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS[v{i}]"
+        )
+        filter_parts.append(
+            f"[0:a]atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS[a{i}]"
+        )
+        concat_inputs += f"[v{i}][a{i}]"
 
-        # Create concat file
-        concat_path = os.path.join(job_dir, "concat.txt")
-        with open(concat_path, "w") as f:
-            for seg in segment_files:
-                f.write(f"file '{os.path.basename(seg)}'\n")
+    filter_parts.append(f"{concat_inputs}concat=n={n}:v=1:a=1[outv][outa]")
+    filter_complex = ";".join(filter_parts)
 
-        # Concatenate segments
-        cmd = [
-            settings.ffmpeg_path, "-y",
-            "-f", "concat", "-safe", "0",
-            "-i", concat_path,
-            "-c", "copy",
-            "-movflags", "+faststart",
-            output_path,
-        ]
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
+    cmd = [
+        settings.ffmpeg_path, "-y",
+        "-i", input_path,
+        "-filter_complex", filter_complex,
+        "-map", "[outv]", "-map", "[outa]",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart",
+        output_path,
+    ]
 
-    finally:
-        # Cleanup temp segments
-        for seg in segment_files:
-            if os.path.exists(seg):
-                os.unlink(seg)
-        concat_path = os.path.join(job_dir, "concat.txt")
-        if os.path.exists(concat_path):
-            os.unlink(concat_path)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"[CUTTER] FFmpeg error: {result.stderr[-1000:]}")
+        result.check_returncode()
+
+    print(f"[CUTTER] Output created: {output_path}")

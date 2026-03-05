@@ -82,6 +82,15 @@ async def run_pipeline(
             padding_s=proc_settings.padding_ms / 1000.0,
             total_duration=duration,
         )
+
+        # Debug logging
+        total_remove = sum(s.end - s.start for s in removed)
+        total_keep = sum(e - s for s, e in keep_intervals)
+        print(f"[PIPELINE] Original duration: {duration:.2f}s")
+        print(f"[PIPELINE] Segments to remove: {len(removed)}, total: {total_remove:.2f}s")
+        print(f"[PIPELINE] Keep intervals: {len(keep_intervals)}, total: {total_keep:.2f}s")
+        print(f"[PIPELINE] Expected result: {total_keep:.2f}s ({total_keep/duration*100:.1f}% of original)")
+
         await progress(f"{len(removed)} trechos para remover", 90)
 
         # Step 7: Cut video
