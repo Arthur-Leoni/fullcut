@@ -5,6 +5,8 @@ Separates audio into stems (drums, bass, other, vocals) and keeps only vocals.
 
 import torch
 import torchaudio
+import soundfile as sf
+import numpy as np
 
 _model_cache = None
 
@@ -34,9 +36,13 @@ def isolate_vocals(audio_path: str, output_path: str) -> None:
 
     model = _get_model()
 
-    # Load audio
+    # Load audio using soundfile (reliable on Windows)
     print(f"[VOICE_ISOLATION] Loading audio: {audio_path}")
-    wav, sr = torchaudio.load(audio_path)
+    data, sr = sf.read(audio_path, dtype="float32")  # (samples,) or (samples, channels)
+    if data.ndim == 1:
+        wav = torch.from_numpy(data).unsqueeze(0)  # (1, samples)
+    else:
+        wav = torch.from_numpy(data.T)  # (channels, samples)
 
     # Resample to model's sample rate if needed (htdemucs expects 44100)
     if sr != model.samplerate:
@@ -67,6 +73,6 @@ def isolate_vocals(audio_path: str, output_path: str) -> None:
     # Resample back to 16kHz for pipeline compatibility
     vocals_mono = torchaudio.functional.resample(vocals_mono, model.samplerate, 16000)
 
-    # Save
-    torchaudio.save(output_path, vocals_mono, 16000)
+    # Save using soundfile (reliable on Windows)
+    sf.write(output_path, vocals_mono.squeeze(0).numpy(), 16000, subtype="PCM_16")
     print(f"[VOICE_ISOLATION] Vocals saved to: {output_path}")
