@@ -137,10 +137,20 @@ async def run_pipeline(
             # Cut video
             if keep_intervals and len(keep_intervals) < len(removed) + 1 + 10000:
                 await progress("Cortando vídeo...", 92)
-                # Apply denoise filter in FFmpeg only if denoise is on AND we didn't already denoise the audio
-                # (if voice isolation was used, audio is already clean — no need for afftdn in cutter)
-                denoise_in_cutter = proc_settings.noise_reduction_strength if (want_denoise and not want_isolate) else None
-                cut_video(input_path, keep_intervals, output_path, denoise_strength=denoise_in_cutter)
+
+                if want_isolate:
+                    # Voice isolation was done externally — we need to first
+                    # put the processed audio into the video, then cut that.
+                    # replace_audio uses -c:v copy so it's fast (no re-encode).
+                    intermediate_path = os.path.join(job_dir, "intermediate.mp4")
+                    replace_audio_in_video(input_path, current_audio, intermediate_path)
+                    cut_video(intermediate_path, keep_intervals, output_path)
+                else:
+                    # No voice isolation — cut original video.
+                    # If denoise is on, apply afftdn inline in FFmpeg (efficient, one pass).
+                    denoise_in_cutter = proc_settings.noise_reduction_strength if want_denoise else None
+                    cut_video(input_path, keep_intervals, output_path, denoise_strength=denoise_in_cutter)
+
                 result_duration = get_duration(output_path)
                 job.result_duration = result_duration
             else:
