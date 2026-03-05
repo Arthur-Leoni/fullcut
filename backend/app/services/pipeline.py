@@ -5,6 +5,7 @@ import traceback
 from app.config import settings
 from app.models import JobStatus, ProcessingSettings, Segment
 from app.services.audio import extract_audio
+from app.services.noise_reduction import reduce_noise, replace_audio_in_video
 from app.services.silence import detect_silences
 from app.services.transcription import transcribe_audio
 from app.services.filler import detect_fillers
@@ -29,7 +30,12 @@ async def run_pipeline(
     job.status = JobStatus.PROCESSING
     job_dir = os.path.dirname(input_path)
     audio_path = os.path.join(job_dir, "audio.wav")
+    clean_audio_path = os.path.join(job_dir, "audio_clean.wav")
     output_path = os.path.join(job_dir, "output.mp4")
+
+    mode = proc_settings.processing_mode  # "cut_only" | "denoise_only" | "both"
+    should_denoise = mode in ("denoise_only", "both")
+    should_cut = mode in ("cut_only", "both")
 
     async def progress(stage: str, percent: int, message: str = ""):
         await store.send_progress(job_id, stage, percent, message)
@@ -44,38 +50,64 @@ async def run_pipeline(
         extract_audio(input_path, audio_path)
         await progress("Áudio extraído", 10)
 
-        # Step 2: Silence detection
-        await progress("Detectando silêncios...", 15)
+        # Step 2: Noise reduction (if enabled)
+        analysis_audio = audio_path  # audio used for analysis (silence/whisper)
+        if should_denoise:
+            await progress("Removendo ruído de fundo...", 12)
+            reduce_noise(
+                audio_path,
+                clean_audio_path,
+                strength=proc_settings.noise_reduction_strength,
+            )
+            analysis_audio = clean_audio_path
+            await progress("Ruído removido", 18)
+
+        # If denoise-only mode, just replace audio and finish
+        if mode == "denoise_only":
+            await progress("Gerando vídeo com áudio limpo...", 85)
+            replace_audio_in_video(input_path, clean_audio_path, output_path)
+            result_duration = get_duration(output_path)
+            job.result_duration = result_duration
+            job.segments_removed = []
+            job.noise_reduced = True
+            job.status = JobStatus.COMPLETED
+            await progress("Concluído!", 100, "Vídeo pronto para download")
+            return
+
+        # --- From here: cut_only or both ---
+
+        # Step 3: Silence detection (use clean audio if denoised for better detection)
+        await progress("Detectando silêncios...", 20)
         silences = detect_silences(
-            audio_path,
+            analysis_audio,
             threshold_db=proc_settings.silence_threshold_db,
             min_duration=proc_settings.min_silence_duration,
         )
         await progress(f"{len(silences)} silêncios encontrados", 25)
 
-        # Step 3: Whisper transcription
+        # Step 4: Whisper transcription
         fillers: list[Segment] = []
         repetitions: list[Segment] = []
         word_segments: list[dict] = []
 
         if proc_settings.detect_fillers or proc_settings.detect_repetitions:
             await progress("Transcrevendo áudio (Whisper)...", 30)
-            word_segments = transcribe_audio(audio_path, model_name=settings.whisper_model)
+            word_segments = transcribe_audio(analysis_audio, model_name=settings.whisper_model)
             await progress("Transcrição concluída", 70)
 
-        # Step 4: Filler detection
+        # Step 5: Filler detection
         if proc_settings.detect_fillers and word_segments:
             await progress("Detectando filler words...", 72)
             fillers = detect_fillers(word_segments, proc_settings.filler_words)
             await progress(f"{len(fillers)} fillers encontrados", 80)
 
-        # Step 5: Repetition detection
+        # Step 6: Repetition detection
         if proc_settings.detect_repetitions and word_segments:
             await progress("Detectando repetições...", 82)
             repetitions = detect_repetitions(word_segments)
             await progress(f"{len(repetitions)} repetições encontradas", 85)
 
-        # Step 6: Merge
+        # Step 7: Merge
         await progress("Calculando cortes...", 87)
         removed, keep_intervals = merge_segments(
             silences, fillers, repetitions,
@@ -93,10 +125,11 @@ async def run_pipeline(
 
         await progress(f"{len(removed)} trechos para remover", 90)
 
-        # Step 7: Cut video
+        # Step 8: Cut video (with denoise filter if mode == "both")
         if keep_intervals and len(keep_intervals) < len(removed) + 1 + 10000:
             await progress("Cortando vídeo...", 92)
-            cut_video(input_path, keep_intervals, output_path)
+            denoise_strength = proc_settings.noise_reduction_strength if should_denoise else None
+            cut_video(input_path, keep_intervals, output_path, denoise_strength=denoise_strength)
             result_duration = get_duration(output_path)
             job.result_duration = result_duration
         else:
@@ -106,6 +139,7 @@ async def run_pipeline(
             job.result_duration = duration
 
         job.segments_removed = removed
+        job.noise_reduced = should_denoise
         job.status = JobStatus.COMPLETED
         await progress("Concluído!", 100, "Vídeo pronto para download")
 

@@ -83,7 +83,7 @@ export default function EditorPage() {
             <div className="text-center">
               <h1 className="text-3xl font-bold">Envie seu vídeo</h1>
               <p className="mt-2 text-muted">
-                Selecione um vídeo e ajuste as configurações de corte
+                Selecione um vídeo e escolha o que deseja fazer
               </p>
             </div>
 
