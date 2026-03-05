@@ -11,7 +11,7 @@ class JobStatus(str, Enum):
 
 
 class ProcessingSettings(BaseModel):
-    processing_mode: str = "both"  # "cut_only" | "denoise_only" | "both"
+    processing_mode: str = "both"  # "cut_only" | "denoise_only" | "both" | "voice_isolation"
     noise_reduction_strength: float = 0.5  # 0.0 to 1.0
     silence_threshold_db: float = -35.0
     min_silence_duration: float = 0.5
@@ -40,4 +40,5 @@ class JobResponse(BaseModel):
     result_duration: float | None = None
     segments_removed: list[Segment] | None = None
     noise_reduced: bool = False
+    voice_isolated: bool = False
     error: str | None = None

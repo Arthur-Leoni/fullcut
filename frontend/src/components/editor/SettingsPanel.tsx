@@ -26,18 +26,24 @@ const modes = [
     label: "Ambos",
     description: "Corta e remove ruído",
   },
+  {
+    value: "voice_isolation" as const,
+    icon: "🎤",
+    label: "Isolar voz",
+    description: "Extrai apenas a fala (IA)",
+  },
 ];
 
 export function SettingsPanel({ settings, onChange }: SettingsPanelProps) {
-  const showCutSettings = settings.processing_mode !== "denoise_only";
-  const showDenoiseSettings = settings.processing_mode !== "cut_only";
+  const showCutSettings = settings.processing_mode === "cut_only" || settings.processing_mode === "both";
+  const showDenoiseSettings = settings.processing_mode === "denoise_only" || settings.processing_mode === "both";
 
   return (
     <div className="space-y-6 rounded-2xl bg-surface p-6 ring-1 ring-foreground/5">
       <h3 className="text-lg font-semibold">O que você quer fazer?</h3>
 
       {/* Mode selector */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {modes.map((mode) => (
           <button
             key={mode.value}

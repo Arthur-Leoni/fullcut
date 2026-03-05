@@ -51,6 +51,7 @@ export function ResultView({ job, onReset }: ResultViewProps) {
   const fillers = job.segments_removed?.filter((s) => s.type === "filler").length ?? 0;
   const repetitions = job.segments_removed?.filter((s) => s.type === "repetition").length ?? 0;
   const noiseReduced = job.noise_reduced;
+  const voiceIsolated = job.voice_isolated;
 
   return (
     <div className="space-y-8">
@@ -88,8 +89,9 @@ export function ResultView({ job, onReset }: ResultViewProps) {
       </div>
 
       {/* Segments breakdown */}
-      {(silences > 0 || fillers > 0 || repetitions > 0 || noiseReduced) && (
+      {(silences > 0 || fillers > 0 || repetitions > 0 || noiseReduced || voiceIsolated) && (
         <div className="flex flex-wrap justify-center gap-6 text-sm text-muted">
+          {voiceIsolated && <span>🎤 Voz isolada</span>}
           {noiseReduced && <span>🔊 Ruído removido</span>}
           {silences > 0 && <span>🔇 {silences} silêncios</span>}
           {fillers > 0 && <span>🗣️ {fillers} fillers</span>}

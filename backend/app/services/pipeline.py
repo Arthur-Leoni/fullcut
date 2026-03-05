@@ -6,6 +6,7 @@ from app.config import settings
 from app.models import JobStatus, ProcessingSettings, Segment
 from app.services.audio import extract_audio
 from app.services.noise_reduction import reduce_noise, replace_audio_in_video
+from app.services.voice_isolation import isolate_vocals
 from app.services.silence import detect_silences
 from app.services.transcription import transcribe_audio
 from app.services.filler import detect_fillers
@@ -33,9 +34,10 @@ async def run_pipeline(
     clean_audio_path = os.path.join(job_dir, "audio_clean.wav")
     output_path = os.path.join(job_dir, "output.mp4")
 
-    mode = proc_settings.processing_mode  # "cut_only" | "denoise_only" | "both"
+    mode = proc_settings.processing_mode  # "cut_only" | "denoise_only" | "both" | "voice_isolation"
     should_denoise = mode in ("denoise_only", "both")
     should_cut = mode in ("cut_only", "both")
+    should_isolate = mode == "voice_isolation"
 
     async def progress(stage: str, percent: int, message: str = ""):
         await store.send_progress(job_id, stage, percent, message)
@@ -70,6 +72,20 @@ async def run_pipeline(
             job.result_duration = result_duration
             job.segments_removed = []
             job.noise_reduced = True
+            job.status = JobStatus.COMPLETED
+            await progress("Concluído!", 100, "Vídeo pronto para download")
+            return
+
+        # If voice isolation mode, use Demucs to extract vocals
+        if should_isolate:
+            await progress("Isolando voz (IA)...", 15)
+            isolate_vocals(audio_path, clean_audio_path)
+            await progress("Voz isolada, gerando vídeo...", 80)
+            replace_audio_in_video(input_path, clean_audio_path, output_path)
+            result_duration = get_duration(output_path)
+            job.result_duration = result_duration
+            job.segments_removed = []
+            job.voice_isolated = True
             job.status = JobStatus.COMPLETED
             await progress("Concluído!", 100, "Vídeo pronto para download")
             return
